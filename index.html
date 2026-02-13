@@ -159,8 +159,25 @@
         const MapPreview = ({ preserve, isVisible }) => {
             const mapRef = useRef(null);
             const mapInstanceRef = useRef(null);
+            const featureLayerRef = useRef(null);
 
-            // Initialize map
+            // Function to center and fit bounds properly
+            const fitToShape = (map) => {
+                if (featureLayerRef.current) {
+                    // If it's a polygon (or any layered feature with bounds)
+                    if (featureLayerRef.current.getBounds) {
+                        map.fitBounds(featureLayerRef.current.getBounds(), { 
+                            padding: [50, 50],
+                            maxZoom: 16 // Prevent too much zoom on small shapes
+                        });
+                    } else if (featureLayerRef.current.getLatLng) {
+                        // If it's just a marker
+                        map.setView(featureLayerRef.current.getLatLng(), 15);
+                    }
+                }
+            };
+
+            // Initialize map and features
             useEffect(() => {
                 if (!mapRef.current) return;
                 if (!mapInstanceRef.current) {
@@ -169,25 +186,39 @@
                         attribution: '&copy; OpenStreetMap'
                     }).addTo(mapInstanceRef.current);
                 }
+                
                 const map = mapInstanceRef.current;
-                map.eachLayer((layer) => { if (!layer._url) map.removeLayer(layer); });
+                
+                // Clear existing features
+                if (featureLayerRef.current) {
+                    map.removeLayer(featureLayerRef.current);
+                }
+
                 if (preserve.geometry && preserve.geometry.rings) {
                     const latLngs = preserve.geometry.rings.map(ring => ring.map(coord => [coord[1], coord[0]]));
-                    const polygon = L.polygon(latLngs, { color: '#059669', fillColor: '#10b981', fillOpacity: 0.35, weight: 2 }).addTo(map);
-                    map.fitBounds(polygon.getBounds(), { padding: [20, 20] });
+                    featureLayerRef.current = L.polygon(latLngs, { 
+                        color: '#059669', 
+                        fillColor: '#10b981', 
+                        fillOpacity: 0.35, 
+                        weight: 2 
+                    }).addTo(map);
                 } else if (preserve.latitude && preserve.longitude) {
-                    L.marker([preserve.latitude, preserve.longitude]).addTo(map);
-                    map.setView([preserve.latitude, preserve.longitude], 14);
+                    featureLayerRef.current = L.marker([preserve.latitude, preserve.longitude]).addTo(map);
                 }
+
+                // Initial fit
+                fitToShape(map);
             }, [preserve]);
 
             // Fix for Leaflet initialization in a hidden/animated container
             useEffect(() => {
                 if (isVisible && mapInstanceRef.current) {
-                    // Small delay to allow the CSS grid transition to start/finish
+                    // Delay to allow the CSS transition to finish expanding the box
                     const timer = setTimeout(() => {
                         mapInstanceRef.current.invalidateSize();
-                    }, 100);
+                        // Re-fit the bounds now that we know the final pixel dimensions
+                        fitToShape(mapInstanceRef.current);
+                    }, 300);
                     return () => clearTimeout(timer);
                 }
             }, [isVisible]);
