@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nature Preserves Explorer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+     crossorigin=""/>
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+     crossorigin=""></script>
+
+    <style>
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #d1d5db;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #9ca3af;
+        }
+        /* Leaflet container z-index fix */
+        .leaflet-container {
+            z-index: 1;
+            width: 100%;
+            height: 100%;
+        }
+        /* Hide scrollbar for horizontal chips but allow scroll */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo, useRef } from 'https://esm.sh/react@18.2.0';
+        import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
+        import { 
+            MapPin, 
+            TreePine, 
+            Info, 
+            ArrowLeft, 
+            Navigation, 
+            Car, 
+            PawPrint, 
+            Bike, 
+            Camera, 
+            Waves, 
+            Mountain, 
+            Sunset, 
+            Search, 
+            Loader2,
+            AlertTriangle,
+            ChevronUp,
+            ChevronDown,
+            ExternalLink,
+            Map as MapIcon,
+            X
+        } from 'https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0';
+
+        // --- Configuration ---
+
+        const ARCGIS_URL = "https://services.arcgis.com/M0RcaZONLNmkvwdY/arcgis/rest/services/LTC_Nature_Preserves_2025/FeatureServer/0/query";
+
+        // Updated: High-availability Unsplash Nature IDs
+        const PLACEHOLDER_IMAGES = [
+            "https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=1000&q=80", // Nature/Hills
+            "https://images.unsplash.com/photo-1472214103451-9374bd1c798e?auto=format&fit=crop&w=1000&q=80", // Nature/Valley
+            "https://images.unsplash.com/photo-1426604966848-d7adac402bff?auto=format&fit=crop&w=1000&q=80", // Nature/Forest
+            "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&w=1000&q=80", // Nature/Sunlight
+            "https://images.unsplash.com/photo-1501854140884-074bf86ee91c?auto=format&fit=crop&w=1000&q=80", // Nature/Lake
+            "https://images.unsplash.com/photo-1510784722466-f2aa9c52fff6?auto=format&fit=crop&w=1000&q=80", // Nature/Sunset
+            "https://images.unsplash.com/photo-1505765050516-f72dcac9c60e?auto=format&fit=crop&w=1000&q=80", // Nature/Bridge
+            "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1000&q=80"  // Nature/Fog
+        ];
+
+        // A very reliable fallback image (Forest path)
+        const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1448375240586-dfd8d395ea6c?auto=format&fit=crop&w=1000&q=80";
+
+        // Filters configuration
+        const AVAILABLE_FILTERS = [
+            { name: "Hiking", icon: Navigation },
+            { name: "Dogs Allowed", icon: PawPrint },
+            { name: "Water Access", icon: Waves },
+            { name: "Parking", icon: Car },
+            { name: "Views", icon: Mountain },
+            { name: "Wildlife", icon: Camera }
+        ];
+
+        // --- Components ---
+
+        const AmenityIcon = ({ name, size = 16, className = "" }) => {
+            const n = name.toLowerCase();
+            let Icon = TreePine;
+            if (n.includes('park') || n.includes('car')) Icon = Car;
+            else if (n.includes('dog') || n.includes('pet')) Icon = PawPrint;
+            else if (n.includes('bike') || n.includes('cycle')) Icon = Bike;
+            else if (n.includes('photo')) Icon = Camera;
+            else if (n.includes('water') || n.includes('lake') || n.includes('river')) Icon = Waves;
+            else if (n.includes('hike') || n.includes('trail')) Icon = Navigation;
+            else if (n.includes('climb') || n.includes('mountain')) Icon = Mountain;
+            else if (n.includes('view') || n.includes('sun')) Icon = Sunset;
+
+            return (
+                <div className={`flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-md text-xs font-medium border border-emerald-100 ${className}`}>
+                    <Icon size={size} />
+                    <span>{name}</span>
+                </div>
+            );
+        };
+
+        const calculateDistance = (lat1, lon1, lat2, lon2) => {
+            const nLat1 = Number(lat1);
+            const nLon1 = Number(lon1);
+            const nLat2 = Number(lat2);
+            const nLon2 = Number(lon2);
+
+            if (isNaN(nLat1) || isNaN(nLon1) || isNaN(nLat2) || isNaN(nLon2)) return null;
+            if (lat1 === null || lon1 === null || lat2 === null || lon2 === null) return null;
+
+            const R = 3958.8;
+            const dLat = (nLat2 - nLat1) * (Math.PI / 180);
+            const dLon = (nLon2 - nLon1) * (Math.PI / 180);
+            const a = 
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(nLat1 * (Math.PI / 180)) * Math.cos(nLat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return (R * c).toFixed(1);
+        };
+
+        const getSmartCentroid = (geometry) => {
+            if (!geometry) return { lat: null, lon: null };
+
+            if (geometry.x !== undefined && geometry.y !== undefined) {
+                return { lat: Number(geometry.y), lon: Number(geometry.x) };
+            }
+
+            if (geometry.rings && geometry.rings.length > 0) {
+                const ring = geometry.rings[0];
+                if (!ring || ring.length === 0) return { lat: null, lon: null };
+
+                let sumX = 0;
+                let sumY = 0;
+                
+                for (let i = 0; i < ring.length; i++) {
+                    sumX += ring[i][0]; 
+                    sumY += ring[i][1]; 
+                }
+
+                return {
+                    lat: sumY / ring.length,
+                    lon: sumX / ring.length
+                };
+            }
+
+            return { lat: null, lon: null };
+        };
+
+        // --- Leaflet Map Component ---
+        const MapPreview = ({ preserve }) => {
+            const mapRef = useRef(null);
+            const mapInstanceRef = useRef(null);
+
+            useEffect(() => {
+                if (!mapRef.current) return;
+
+                // Initialize map if not exists
+                if (!mapInstanceRef.current) {
+                    mapInstanceRef.current = L.map(mapRef.current).setView([preserve.latitude, preserve.longitude], 13);
+                    
+                    // Add OpenStreetMap tiles
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    }).addTo(mapInstanceRef.current);
+                }
+
+                const map = mapInstanceRef.current;
+
+                // Clear existing layers (except tiles)
+                map.eachLayer((layer) => {
+                    if (!layer._url) { // Don't remove tile layer
+                        map.removeLayer(layer);
+                    }
+                });
+
+                // Handle Geometry
+                if (preserve.geometry && preserve.geometry.rings) {
+                    // It's a Polygon
+                    // ArcGIS rings are [long, lat], Leaflet needs [lat, long]
+                    const latLngs = preserve.geometry.rings.map(ring => 
+                        ring.map(coord => [coord[1], coord[0]])
+                    );
+                    
+                    const polygon = L.polygon(latLngs, {
+                        color: '#059669', // Emerald-600
+                        fillColor: '#10b981', // Emerald-500
+                        fillOpacity: 0.35,
+                        weight: 2
+                    }).addTo(map);
+                    
+                    // Fit bounds to polygon
+                    map.fitBounds(polygon.getBounds(), { padding: [20, 20] });
+
+                } else if (preserve.latitude && preserve.longitude) {
+                    // Fallback to Marker
+                    const marker = L.marker([preserve.latitude, preserve.longitude]).addTo(map);
+                    map.setView([preserve.latitude, preserve.longitude], 14);
+                }
+
+                // Cleanup on unmount
+                return () => {
+                   // We keep the map instance alive for performance if switching quickly, 
+                   // but usually better to cleanup if component is destroyed.
+                   // Here we just let the effect re-run for simplicity on prop change.
+                };
+            }, [preserve]); // Re-run when preserve changes
+
+            return <div ref={mapRef} className="w-full h-full" />;
+        };
+
+        function App() {
+            const [view, setView] = useState('list');
+            const [selectedPreserve, setSelectedPreserve] = useState(null);
+            const [preserves, setPreserves] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [userLocation, setUserLocation] = useState(null);
+            const [error, setError] = useState(null);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [visibleCount, setVisibleCount] = useState(5); // Start showing 5 items
+            const [selectedFilters, setSelectedFilters] = useState([]);
+            
+            // Location state
+            const [locationError, setLocationError] = useState(null);
+            const [isLocating, setIsLocating] = useState(false);
+            const [usingDemoLocation, setUsingDemoLocation] = useState(false);
+
+            // New State for Inline Directions
+            const [showDirections, setShowDirections] = useState(false);
+
+            // Auto-expand results when searching or filtering
+            useEffect(() => {
+                if (searchTerm || selectedFilters.length > 0) {
+                    setVisibleCount(1000); // Show all results when searching/filtering
+                } else {
+                    setVisibleCount(5); // Reset to 5 when filters are cleared
+                }
+            }, [searchTerm, selectedFilters]);
+
+            const toggleFilter = (filterName) => {
+                setSelectedFilters(prev => 
+                    prev.includes(filterName) 
+                        ? prev.filter(f => f !== filterName) 
+                        : [...prev, filterName]
+                );
+            };
+
+            const requestLocation = () => {
+                setIsLocating(true);
+                setLocationError(null);
+                setUsingDemoLocation(false);
+
+                if (!navigator.geolocation) {
+                    setLocationError("Geolocation is not supported by your browser");
+                    setIsLocating(false);
+                    return;
+                }
+
+                if (window.location.protocol === 'file:') {
+                    setLocationError("Browser blocks GPS on local files (file://). Use 'Simulate Location' or run on a local server.");
+                    setIsLocating(false);
+                    return;
+                }
+
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        console.log("Location found:", position.coords);
+                        setUserLocation({
+                            lat: position.coords.latitude,
+                            lon: position.coords.longitude
+                        });
+                        setIsLocating(false);
+                        setLocationError(null);
+                    },
+                    (err) => {
+                        console.warn("Location error:", err);
+                        let msg = "Unable to retrieve location.";
+                        if (err.code === 1) msg = "Location permission denied. Check browser settings.";
+                        if (err.code === 2) msg = "Location unavailable. Signal weak.";
+                        if (err.code === 3) msg = "Location request timed out.";
+                        setLocationError(msg);
+                        setIsLocating(false);
+                    },
+                    { 
+                        enableHighAccuracy: true, 
+                        timeout: 10000, 
+                        maximumAge: 0 
+                    }
+                );
+            };
+
+            const simulateLocation = () => {
+                const referenceLat = preserves.length > 0 ? preserves[0].latitude : 44.76; 
+                const referenceLon = preserves.length > 0 ? preserves[0].longitude : -85.62;
+                
+                setUserLocation({
+                    lat: referenceLat - 0.05, 
+                    lon: referenceLon - 0.05
+                });
+                setUsingDemoLocation(true);
+                setLocationError(null);
+            };
+
+            useEffect(() => {
+                requestLocation();
+            }, []);
+
+            useEffect(() => {
+                const fetchData = async () => {
+                    try {
+                        const params = new URLSearchParams({
+                            where: '1=1',
+                            outFields: '*',
+                            returnGeometry: 'true',
+                            outSR: '4326', 
+                            f: 'json'
+                        });
+
+                        const response = await fetch(`${ARCGIS_URL}?${params.toString()}`);
+                        const data = await response.json();
+
+                        if (data.error) throw new Error(data.error.message);
+
+                        if (data.features && data.features.length > 0) {
+                            const mappedData = data.features.map((feature, index) => {
+                                const attr = feature.attributes;
+                                const geom = feature.geometry;
+                                
+                                const center = getSmartCentroid(geom);
+
+                                const randomAmenities = [
+                                    ["Hiking", "Views"], 
+                                    ["Water Access", "Parking"], 
+                                    ["Wildlife", "Trails"],
+                                    ["Dogs Allowed", "Hiking"]
+                                ];
+                                
+                                return {
+                                    id: attr.OBJECTID ? `${attr.OBJECTID}_${index}` : `preserve_${index}`,
+                                    objectID: attr.OBJECTID, // Capture raw OBJECTID for queries
+                                    name: attr.Name || attr.PreserveName || "Unnamed Preserve",
+                                    description: attr.Description || attr.Comments || "A beautiful natural area protected for future generations.",
+                                    amenities: randomAmenities[index % randomAmenities.length],
+                                    image: PLACEHOLDER_IMAGES[index % PLACEHOLDER_IMAGES.length],
+                                    latitude: center.lat,
+                                    longitude: center.lon,
+                                    geometry: geom, // Save raw geometry for the map
+                                    distance: null 
+                                };
+                            });
+                            setPreserves(mappedData);
+                        } else {
+                            setPreserves([]);
+                            setError("No preserves found in the database.");
+                        }
+                    } catch (err) {
+                        console.warn("ArcGIS fetch failed:", err);
+                        setError("Unable to load preserves data. Please check your connection or CORS settings.");
+                        setPreserves([]); 
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+
+                fetchData();
+            }, []);
+
+            const processedPreserves = useMemo(() => {
+                let data = [...preserves];
+                
+                if (userLocation) {
+                    data = data.map(p => ({
+                        ...p,
+                        distance: calculateDistance(userLocation.lat, userLocation.lon, p.latitude, p.longitude)
+                    }));
+                    
+                    data.sort((a, b) => {
+                        if (a.distance === null || a.distance === undefined) return 1;
+                        if (b.distance === null || b.distance === undefined) return -1;
+                        
+                        const distA = parseFloat(a.distance);
+                        const distB = parseFloat(b.distance);
+                        
+                        if (isNaN(distA)) return 1;
+                        if (isNaN(distB)) return -1;
+
+                        return distA - distB;
+                    });
+                }
+                
+                return data;
+            }, [preserves, userLocation]);
+
+            const handlePreserveClick = (preserve) => {
+                setSelectedPreserve(preserve);
+                setShowDirections(false);
+                setView('detail');
+                window.scrollTo(0,0);
+            };
+
+            const handleBack = () => {
+                setView('list');
+                setSelectedPreserve(null);
+                setShowDirections(false);
+            };
+
+            const handleImageError = (e) => {
+                if (e.target.src !== FALLBACK_IMAGE) {
+                    e.target.src = FALLBACK_IMAGE;
+                } else {
+                    e.target.style.display = 'none'; 
+                }
+            };
+
+            const filteredPreserves = processedPreserves.filter(p => {
+                // 1. Text Search Check
+                const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                                      p.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                      (p.amenities && p.amenities.some(a => a.toLowerCase().includes(searchTerm.toLowerCase())));
+                
+                // 2. Filter Chips Check (AND logic: must contain ALL selected filters)
+                const matchesFilters = selectedFilters.length === 0 || 
+                                       (p.amenities && selectedFilters.every(filter => p.amenities.includes(filter)));
+
+                return matchesSearch && matchesFilters;
+            });
+
+            // Limit list based on visibleCount
+            const displayedPreserves = filteredPreserves.slice(0, visibleCount);
+
+            if (view === 'detail' && selectedPreserve) {
+                return (
+                    <div className="min-h-screen bg-stone-50 text-stone-900 font-sans pb-12">
+                        <div className="relative h-72 md:h-96 w-full bg-stone-200">
+                            <img 
+                                src={selectedPreserve.image} 
+                                alt={selectedPreserve.name}
+                                onError={handleImageError}
+                                className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent"></div>
+                            <button 
+                                onClick={handleBack}
+                                className="absolute top-4 left-4 bg-white/20 backdrop-blur-md hover:bg-white/30 text-white p-2 rounded-full transition-all"
+                            >
+                                <ArrowLeft size={24} />
+                            </button>
+                            <div className="absolute bottom-6 left-6 right-6 text-white">
+                                <h1 className="text-3xl md:text-4xl font-bold mb-2">{selectedPreserve.name}</h1>
+                                {selectedPreserve.distance && (
+                                    <div className="flex items-center gap-2 text-white/90">
+                                        <Navigation size={16} />
+                                        <span className="text-sm font-medium">{selectedPreserve.distance} miles away</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="max-w-3xl mx-auto px-6 -mt-8 relative z-10">
+                            <div className="bg-white rounded-xl shadow-lg p-6 md:p-8">
+                                <div className="border-b border-stone-100 pb-6 mb-8">
+                                    <div className="flex flex-wrap gap-3">
+                                        <button 
+                                            onClick={() => setShowDirections(!showDirections)}
+                                            className={`flex-1 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors shadow-sm ${showDirections ? 'bg-emerald-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
+                                        >
+                                            {showDirections ? <ChevronUp size={18} /> : <Navigation size={18} />}
+                                            {showDirections ? 'Close Directions' : 'Get Directions'}
+                                        </button>
+                                        <button 
+                                            onClick={() => window.open(`https://landtrust.maps.arcgis.com/apps/webappviewer/index.html?id=c07f74b183a64f4bb57cd3177560a7c8&marker=${selectedPreserve.longitude},${selectedPreserve.latitude}&level=15`, '_blank')}
+                                            className="flex-1 bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors"
+                                        >
+                                            <ExternalLink size={18} />
+                                            Open Map
+                                        </button>
+                                    </div>
+
+                                    {/* Slide Down Directions Panel */}
+                                    <div className={`grid transition-all duration-300 ease-in-out ${showDirections ? 'grid-rows-[1fr] opacity-100 mt-4' : 'grid-rows-[0fr] opacity-0 mt-0'}`}>
+                                        <div className="overflow-hidden">
+                                            <div className="bg-stone-50 rounded-xl p-4 border border-stone-200">
+                                                <h4 className="font-semibold text-stone-800 mb-3 flex items-center gap-2 text-sm uppercase tracking-wide">
+                                                    Navigate To Preserve
+                                                </h4>
+                                                
+                                                {/* Map Preview with Leaflet */}
+                                                <div className="w-full h-48 bg-stone-200 rounded-lg overflow-hidden mb-4 relative shadow-inner z-0">
+                                                     <MapPreview preserve={selectedPreserve} />
+                                                </div>
+
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                    <button 
+                                                        onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${selectedPreserve.latitude},${selectedPreserve.longitude}`, '_blank')}
+                                                        className="flex items-center justify-center gap-2 bg-white border border-stone-300 text-stone-700 py-2.5 px-3 rounded-lg hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition-colors text-sm font-bold shadow-sm"
+                                                    >
+                                                        <MapPin size={16} />
+                                                        Open Google Maps
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => window.open(`http://maps.apple.com/?daddr=${selectedPreserve.latitude},${selectedPreserve.longitude}`, '_blank')}
+                                                        className="flex items-center justify-center gap-2 bg-white border border-stone-300 text-stone-700 py-2.5 px-3 rounded-lg hover:bg-stone-100 transition-colors text-sm font-bold shadow-sm"
+                                                    >
+                                                        <Navigation size={16} />
+                                                        Open Apple Maps
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <h3 className="text-lg font-semibold text-stone-800 mb-3 flex items-center gap-2">
+                                    <Info size={18} className="text-emerald-600"/>
+                                    About the Preserve
+                                </h3>
+                                <p className="text-stone-600 leading-relaxed mb-8 text-lg">
+                                    {selectedPreserve.description}
+                                </p>
+
+                                <h3 className="text-lg font-semibold text-stone-800 mb-4 flex items-center gap-2">
+                                    <TreePine size={18} className="text-emerald-600"/>
+                                    Amenities & Highlights
+                                </h3>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                    {selectedPreserve.amenities.map((item, i) => (
+                                        <div key={i} className="flex items-center gap-3 p-3 bg-stone-50 rounded-lg border border-stone-100">
+                                            <AmenityIcon name={item} size={20} className="bg-transparent border-none p-0" />
+                                            <span className="text-stone-700 font-medium">{item}</span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-stone-100 font-sans text-stone-900">
+                    <header className="bg-white shadow-sm sticky top-0 z-20">
+                        <div className="max-w-md mx-auto px-4 py-4">
+                            <div className="flex items-center justify-between mb-4">
+                                <h1 className="text-2xl font-bold text-emerald-900 flex items-center gap-2">
+                                    <TreePine className="text-emerald-600" />
+                                    LTC Preserves
+                                </h1>
+                                {loading && <Loader2 className="animate-spin text-emerald-500" />}
+                            </div>
+                            
+                            <div className="relative mb-3">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={18} />
+                                <input 
+                                    type="text" 
+                                    placeholder="Find a preserve..." 
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="w-full bg-stone-50 border-none rounded-xl py-3 pl-10 pr-4 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all placeholder:text-stone-400"
+                                />
+                            </div>
+
+                            {/* Amenity Filter Chips - UPDATED TO WRAP */}
+                            <div className="flex flex-wrap gap-2 pb-2">
+                                {AVAILABLE_FILTERS.map((filter) => {
+                                    const FilterIcon = filter.icon;
+                                    const isActive = selectedFilters.includes(filter.name);
+                                    return (
+                                        <button
+                                            key={filter.name}
+                                            onClick={() => toggleFilter(filter.name)}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold whitespace-nowrap transition-colors border ${
+                                                isActive 
+                                                ? 'bg-emerald-600 text-white border-emerald-600' 
+                                                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
+                                            }`}
+                                        >
+                                            <FilterIcon size={13} />
+                                            {filter.name}
+                                            {isActive && <X size={12} className="ml-1 opacity-75" />}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="max-w-md mx-auto px-4 py-6 space-y-4">
+                        
+                        {/* Status Bar for Location Debugging */}
+                        <div className={`p-4 rounded-xl text-sm mb-4 flex gap-3 items-start transition-colors ${locationError || error ? 'bg-red-50 text-red-800' : 'bg-blue-50 text-blue-800'}`}>
+                            {(locationError || error) ? <AlertTriangle className="shrink-0 mt-0.5" size={16} /> : <Info className="shrink-0 mt-0.5" size={16} />}
+                            <div className="flex-1">
+                                <div className="mb-2 font-medium">
+                                    {error ? (
+                                        error
+                                    ) : usingDemoLocation ? (
+                                        "Simulated Location Active"
+                                    ) : (
+                                        locationError || (
+                                            userLocation 
+                                            ? `GPS Active: ${userLocation.lat.toFixed(4)}, ${userLocation.lon.toFixed(4)}` 
+                                            : "Enable location to see nearby preserves."
+                                        )
+                                    )}
+                                </div>
+                                
+                                <div className="flex gap-4">
+                                    <button 
+                                        onClick={requestLocation}
+                                        disabled={isLocating}
+                                        className={`font-semibold underline text-xs uppercase tracking-wide disabled:opacity-50 ${locationError ? 'text-red-900' : 'text-blue-900'}`}
+                                    >
+                                        {isLocating ? "Locating..." : (locationError ? "Retry GPS" : "Enable Location")}
+                                    </button>
+                                    
+                                    {!usingDemoLocation && preserves.length > 0 && (
+                                        <button 
+                                            onClick={simulateLocation}
+                                            className={`font-semibold underline text-xs uppercase tracking-wide ${locationError ? 'text-red-900' : 'text-blue-900'}`}
+                                        >
+                                            Simulate Location
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Preserves List Section */}
+                        <div>
+                            <h2 className="text-lg font-bold text-stone-800 mb-3 px-1 flex items-center gap-2">
+                                <TreePine size={20} className="text-emerald-600"/>
+                                {(searchTerm || selectedFilters.length > 0) ? `Results (${filteredPreserves.length})` : 'Closest Preserves'}
+                            </h2>
+                            <div className="space-y-4">
+                                {displayedPreserves.map((preserve) => (
+                                    <div 
+                                        key={preserve.id}
+                                        onClick={() => handlePreserveClick(preserve)}
+                                        className="group bg-white rounded-2xl overflow-hidden shadow-sm border border-stone-200/60 active:scale-[0.98] transition-all cursor-pointer hover:shadow-md"
+                                    >
+                                        <div className="relative h-48 w-full overflow-hidden bg-stone-200">
+                                            <img 
+                                                src={preserve.image} 
+                                                alt={preserve.name}
+                                                onError={handleImageError}
+                                                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                                            />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-80" />
+                                            
+                                            <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end">
+                                                <div className="text-white">
+                                                    <h2 className="font-bold text-xl leading-tight shadow-black drop-shadow-sm">{preserve.name}</h2>
+                                                </div>
+                                                {preserve.distance && (
+                                                    <div className="bg-white/90 backdrop-blur text-emerald-800 text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow-sm">
+                                                        <Navigation size={12} />
+                                                        {preserve.distance} mi
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="p-4">
+                                            <div className="flex flex-wrap gap-2 mb-3">
+                                                {preserve.amenities.slice(0, 3).map((amenity, idx) => (
+                                                    <AmenityIcon key={idx} name={amenity} />
+                                                ))}
+                                                {preserve.amenities.length > 3 && (
+                                                    <span className="text-xs text-stone-400 font-medium py-1 px-1">+{preserve.amenities.length - 3} more</span>
+                                                )}
+                                            </div>
+                                            <p className="text-stone-500 text-sm line-clamp-2 leading-relaxed">
+                                                {preserve.description}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            
+                            {/* Expand Button (Only show if NOT searching/filtering) */}
+                            {(!searchTerm && selectedFilters.length === 0) && visibleCount < filteredPreserves.length && (
+                                <button 
+                                    onClick={() => setVisibleCount(prev => prev + 5)}
+                                    className="w-full py-3 mt-4 bg-white border border-stone-200 text-stone-600 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-stone-50 transition-colors shadow-sm"
+                                >
+                                    <ChevronDown size={20} />
+                                    Show More Preserves ({filteredPreserves.length - visibleCount} remaining)
+                                </button>
+                            )}
+                        </div>
+
+                        {filteredPreserves.length === 0 && !loading && !error && (
+                            <div className="text-center py-12 text-stone-400">
+                                <TreePine size={48} className="mx-auto mb-3 opacity-20" />
+                                <p>No preserves found matching your filters.</p>
+                            </div>
+                        )}
+                        
+                         {filteredPreserves.length === 0 && !loading && error && (
+                            <div className="text-center py-12 text-red-400">
+                                <AlertTriangle size={48} className="mx-auto mb-3 opacity-20" />
+                                <p>Unable to load preserves.</p>
+                            </div>
+                        )}
+
+                        {/* Service Area Map Section */}
+                        <div className="mt-8 pb-8">
+                            <h2 className="text-lg font-bold text-stone-800 mb-4 px-1 flex items-center gap-2">
+                                <MapIcon size={20} className="text-emerald-600"/>
+                                Service Area Map
+                            </h2>
+                            <div className="w-full h-[500px] bg-stone-200 rounded-2xl overflow-hidden border border-stone-200 shadow-md">
+                                <iframe 
+                                    src="https://landtrust.maps.arcgis.com/apps/webappviewer/index.html?id=c07f74b183a64f4bb57cd3177560a7c8" 
+                                    width="100%" 
+                                    height="100%" 
+                                    frameBorder="0" 
+                                    title="Service Area Map"
+                                    className="w-full h-full"
+                                ></iframe>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
